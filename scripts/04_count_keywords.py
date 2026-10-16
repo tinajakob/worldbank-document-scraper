@@ -1,12 +1,6 @@
-import numpy as np
 import pandas as pd
-import json
 import os
 import time
-import dask
-import dask.dataframe
-import dask.bag as db
-import matplotlib.pyplot as plt
 import re
 import string
 import english_words
@@ -31,9 +25,10 @@ files_dir = DOCS_DIR
 out_dir = OUT_DIR
 os.chdir(in_dir)
 
-# Import project list
-df = pd.read_csv(out_dir + r"\project_list.csv")
-df["year"] = df.file_name.str[2:6].astype(int)
+# NOTE: this module used to read project_list.csv (hundreds of MB) here into a frame
+# that was never used again. Each pool worker re-imports this module, so that cost
+# seconds and a lot of memory per worker. 06_finalize_dataset.py is where the project
+# list is actually joined onto these counts.
 
 # Change to file directory
 os.chdir(files_dir)
@@ -164,24 +159,67 @@ def read_and_count(filename, searches, all_words=all_words):
         print(filename)
     return wb_counts
 
-read_and_count("doc_1947_11929618.txt", searches=searches)  # Test function
 
 
-# Get all file names
-all_files = os.listdir()
-print(len(all_files))
+# Get counts for all files, one worker process per core.
+# NOTE: the work is CPU-bound in `re`, not I/O-bound, so threads gain nothing -- the GIL
+# serialises them. Measured on the full corpus (66.8 GB, 343,177 documents): one core gives
+# 14-19 hours, ten processes bring it to about an hour. A process pool needs the
+# `if __name__ == "__main__"` guard below, because on Windows every worker re-imports this
+# module and would otherwise spawn recursively.
+N_WORKERS = max(1, min(10, (os.cpu_count() or 2) - 2))
+CHECKPOINT_EVERY = 20000
 
-# Get counts for all files with dask
-# NOTE: dask.bag defaults to the multiprocessing scheduler. On Windows each worker re-imports
-# this module, so the compute below must sit behind an `if __name__ == "__main__"` guard or it
-# spawns recursively (the prediction script does the same). The work here is I/O-bound anyway,
-# so the threaded scheduler is both safe and faster.
+
+def _count_one(filename):
+    """Pool target: a module-level function, so it can be pickled to the workers."""
+    return read_and_count(filename, searches=searches)
+
+
 if __name__ == "__main__":
-    all_files_bag = db.from_sequence(all_files, npartitions=7)
+    import multiprocessing as mp
+
+    # Listed here rather than at module level: every pool worker re-imports this module, and
+    # listing hundreds of thousands of filenames once per worker is pure overhead.
+    all_files = os.listdir()
+    print("%s documents found" % format(len(all_files), ","), flush=True)
+
+    # Windows sleeps after an idle timeout even while busy, which would freeze a long run.
+    # The request is released when this process exits. Closing a laptop lid still sleeps.
+    if os.name == "nt":
+        try:
+            import ctypes
+            ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+            print("keeping the machine awake for the duration", flush=True)
+        except Exception as exc:
+            print("could not request a wake lock (%s)" % exc, flush=True)
+
+    columns = ["filename", "nchar", "nwords", "ncwords"] + list(searches.keys())
+    partial_path = os.path.join(out_dir, "keyword_finds_partial.csv")
     starttime = time.time()
-    all_counts = all_files_bag.map(read_and_count, searches=searches).compute(scheduler="threads")
-    duration = (time.time() - starttime)/60
-    print(340000/len(all_files)*duration)  # Estimate for how long it takes for all files
+    all_counts = []
+
+    print("%s documents, %d worker processes" % (format(len(all_files), ","), N_WORKERS),
+          flush=True)
+    with mp.Pool(N_WORKERS) as pool:
+        for i, row in enumerate(pool.imap_unordered(_count_one, all_files, chunksize=64), 1):
+            all_counts.append(row)
+            if i % 2000 == 0:
+                el = time.time() - starttime
+                rate = i / el
+                print("  %s/%s  %4.1f%%  %.0f docs/s  elapsed %.0f min  eta %.0f min"
+                      % (format(i, ","), format(len(all_files), ","),
+                         100.0 * i / len(all_files), rate, el / 60,
+                         (len(all_files) - i) / rate / 60), flush=True)
+            if i % CHECKPOINT_EVERY == 0:
+                pd.DataFrame.from_records(all_counts, columns=columns).to_csv(
+                    partial_path, index=False)
+                print("  checkpoint written at %s documents" % format(i, ","), flush=True)
+
+    duration = (time.time() - starttime) / 60
+    print("done in %.1f min" % duration, flush=True)
 
 
     # Convert to dataframe
@@ -207,5 +245,5 @@ if __name__ == "__main__":
         print(search_df[col].value_counts(normalize=True).head(5))
 
     # Save csv
-    search_df.to_csv(out_dir + r"\keyword_finds.csv", index=False)
+    search_df.to_csv(os.path.join(out_dir, "keyword_finds.csv"), index=False)
 

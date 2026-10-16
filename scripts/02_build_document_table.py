@@ -77,7 +77,7 @@ for json_file in all_files:
 
 
 project_list = pd.concat(all_dfs)
-project_list.to_csv(out_dir + r"\project_list.csv", index=False)
+project_list.to_csv(os.path.join(out_dir, "project_list.csv"), index=False)
 
 # # Inspect table
 # len(project_list)
