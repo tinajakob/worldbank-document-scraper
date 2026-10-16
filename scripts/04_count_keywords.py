@@ -164,7 +164,7 @@ def read_and_count(filename, searches, all_words=all_words):
 # Get counts for all files, one worker process per core.
 # NOTE: the work is CPU-bound in `re`, not I/O-bound, so threads gain nothing -- the GIL
 # serialises them. Measured on the full corpus (66.8 GB, 343,177 documents): one core gives
-# 14-19 hours, ten processes bring it to about an hour. A process pool needs the
+# 14-19 hours, ten processes bring it to a measured 126 minutes. A process pool needs the
 # `if __name__ == "__main__"` guard below, because on Windows every worker re-imports this
 # module and would otherwise spawn recursively.
 N_WORKERS = max(1, min(10, (os.cpu_count() or 2) - 2))

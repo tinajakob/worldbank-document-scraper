@@ -38,7 +38,7 @@ Run in order. Stages 1 and 3 hit the network; stage 4 is CPU and disk bound.
 | 1 | `01_fetch_document_lists.py` | queries the API year by year, 1,000 records per page, saving raw JSON | ~30 min |
 | 2 | `02_build_document_table.py` | parses the JSON into one row per document with metadata and text URL | ~2 min |
 | 3 | `03_download_documents.py` | downloads each document's plain text, skipping files already present | **hours to days** |
-| 4 | `04_count_keywords.py` | regex keyword counts plus length statistics over every document | ~1 h on 10 cores |
+| 4 | `04_count_keywords.py` | regex keyword counts plus length statistics over every document | ~2 h on 10 cores |
 | 5 | `05_flag_sample_procurement_plans.py` | flags boilerplate "sample procurement plan" documents for exclusion | ~1 min |
 | 6 | `06_finalize_dataset.py` | merges the keyword counts onto the document table | ~1 min |
 
@@ -104,8 +104,9 @@ statistics for normalisation.
 - An earlier version used `dask.bag` with the threaded scheduler, on the assumption
   that the work was I/O bound. It is not -- it is CPU bound in `re`, so the GIL
   serialised it onto one core. Measured over the full corpus (66.8 GB, 343,177
-  documents): about 1.0-1.3 MB/s on one core, i.e. 14-19 hours, against roughly an hour
-  with ten processes. If you adapt this code, do not reach for threads here.
+  documents): about 1.0-1.3 MB/s on one core, i.e. 14-19 hours, against a measured
+  126 minutes with ten worker processes (roughly 45 documents/s). If you adapt this
+  code, do not reach for threads here.
 - The pool writes `keyword_finds_partial.csv` every 20,000 documents, so a crash does
   not lose a long run. It does not resume from it automatically; a restart begins
   again from the top.
