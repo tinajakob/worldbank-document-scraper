@@ -1,0 +1,19 @@
+# Scraped data: large, regenerable, and over GitHub's file size limit.
+data/
+*.csv
+*.json
+!requirements.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Editors / OS
+.idea/
+.vscode/
+.Rhistory
+.DS_Store
+Thumbs.db
